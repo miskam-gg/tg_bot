@@ -1,0 +1,207 @@
+import telethon
+import telebot
+import requests
+import xml.etree.ElementTree as ET
+from telebot import types
+
+
+selected_source_currency = None
+selected_target_currency = None
+
+
+TOKEN = "6312076412:AAGd2ua4yNjhA56_KtKL5b1y7S87immnPeA"
+bot = telebot.TeleBot(TOKEN)
+
+CURRENCIES = ["USD", "EUR", "CNY", "RUB"]
+
+
+@bot.message_handler(commands=['start'])
+def main(message,send_greeting=True):
+    global selected_source_currency, selected_target_currency
+    selected_source_currency = None
+    selected_target_currency = None
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    button_currency = types.KeyboardButton("Узнать курсы валют")
+    button_converter = types.KeyboardButton("Конвертер валют")
+    markup.add(button_currency, button_converter)
+    if send_greeting:
+        bot.send_message(message.chat.id, f"Здравствуйте, {message.from_user.first_name}!", reply_markup=markup)
+    else:
+        bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+
+
+def create_buttons(button_texts, row_width):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=row_width)
+    buttons = [types.KeyboardButton(text) for text in button_texts]
+    markup.add(*buttons)
+    return markup
+
+
+@bot.message_handler(func=lambda message: message.text == "Назад")
+def go_back(message):
+    main(message, send_greeting=False)
+
+
+def currency_converter(message):
+    selected_source_currency = ""
+    selected_target_currency = ""
+    buttons = create_buttons(CURRENCIES + ["Назад"], row_width=4)
+    bot.send_message(message.chat.id, "Выберите исходную валюту:", reply_markup=buttons)
+    bot.register_next_step_handler(message, set_source_currency)
+
+
+def set_source_currency(message):
+    global selected_source_currency
+    selected_source_currency = message.text
+    buttons = create_buttons(CURRENCIES + ["Назад"], row_width=4)
+    bot.send_message(message.chat.id, f"Выберите валюту, которую хотите конвертировать в {selected_source_currency}:", reply_markup=buttons)
+    bot.register_next_step_handler(message, set_target_currency)
+
+
+def set_target_currency(message):
+    global selected_target_currency
+    selected_target_currency = message.text
+    bot.send_message(message.chat.id, f"Вы выбрали конвертацию из {selected_target_currency} в {selected_source_currency}. Введите сумму для конвертации:")
+    bot.register_next_step_handler(message, get_currency_to_convert)
+
+
+def get_currency_to_convert(message):
+    try:
+        amount = float(message.text.replace(',', '.'))
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        button_continue = types.KeyboardButton("Продолжить")
+        button_back = types.KeyboardButton("Назад")
+        markup.add(button_continue, button_back)
+        bot.send_message(message.chat.id, "Конвертирую.....", reply_markup=markup)
+        bot.register_next_step_handler(message, convert_currency, amount)
+    except ValueError:
+        bot.send_message(message.chat.id, "Пожалуйста, введите корректное число для конвертации.")
+        bot.register_next_step_handler(message, get_currency_to_convert)
+
+def convert_currency(message, amount):
+    global selected_source_currency, selected_target_currency
+
+    if selected_source_currency is None or selected_target_currency is None:
+        bot.send_message(message.chat.id, "Пожалуйста, сначала выберите исходную и целевую валюты.")
+        return
+
+    currency_rates = get_currency_rates()
+    if selected_source_currency in currency_rates and selected_target_currency in currency_rates:
+        source_rate = float(currency_rates[selected_source_currency].replace(',', '.'))
+        target_rate = float(currency_rates[selected_target_currency].replace(',', '.'))
+        converted_amount = (amount / source_rate) * target_rate
+        response_text = f"{amount} {selected_target_currency} = {converted_amount:.2f} {selected_source_currency}"
+    else:
+        response_text = "Выбранные валюты не найдены в курсах. Список доступных валют /all_currency"
+
+    bot.send_message(message.chat.id, response_text)
+    selected_source_currency = None
+    selected_target_currency = None
+    main(message, send_greeting=False)
+
+@bot.message_handler(func=lambda message: message.text == "Узнать курсы валют")
+def show_currency_menu(message):
+    available_currency(message)
+
+
+@bot.message_handler(commands=['all_currency'])
+def send_currency_rates(message):
+    currency_rates = get_currency_rates()
+    response_text = "Текущие курсы валют:\n"
+    for currency, rate in currency_rates.items():
+        response_text += f"{currency}: {rate} руб.\n"
+    bot.reply_to(message, response_text)
+
+
+def get_currency_rates():
+    url = "https://www.cbr.ru/scripts/XML_daily.asp"
+    response = requests.get(url)
+    root = ET.fromstring(response.content)
+    currency_rates = {}
+    currency_rates['RUB'] = '1'
+    for valute in root.findall('Valute'):
+        currency_code = valute.find('CharCode').text
+        exchange_rate = valute.find('Value').text
+        currency_rates[currency_code] = exchange_rate
+    return currency_rates
+
+
+@bot.message_handler(commands=['dollar'])
+def send_dollar_rate(message):
+    currency_rates = get_currency_rates()
+    if 'USD' in currency_rates:
+        response_text = f"Курс ДОЛЛАРА к рублю: {currency_rates['USD']} руб."
+    else:
+        response_text = "Курс ДОЛЛАРА не найден."
+    bot.reply_to(message, response_text)
+
+
+@bot.message_handler(commands=['euro'])
+def send_euro_rate(message):
+    currency_rates = get_currency_rates()
+    if 'EUR' in currency_rates:
+        response_text = f"Курс ЕВРО к рублю: {currency_rates['EUR']} руб."
+    else:
+        response_text = "Курс ЕВРО не найден."
+    bot.reply_to(message, response_text)
+
+
+@bot.message_handler(commands=['yuan'])
+def send_yuan_rate(message):
+    currency_rates = get_currency_rates()
+    if 'CNY' in currency_rates:
+        response_text = f"Курс ЮАНЯ к рублю: {currency_rates['CNY']} руб."
+    else:
+        response_text = "Курс ЮАНЯ не найден."
+    bot.reply_to(message, response_text)
+
+
+@bot.message_handler(commands=['a_currency'])
+def available_currency(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True,row_width=4)
+    button_dollar = types.KeyboardButton("Доллар")
+    button_euro = types.KeyboardButton("Евро")
+    button_yuan = types.KeyboardButton("Юань")
+    button_all_currency = types.KeyboardButton("Узнать все курсы")
+    button_back = types.KeyboardButton("Назад")
+    markup.add(button_dollar, button_euro, button_yuan, button_all_currency, button_back)
+    bot.send_message(message.chat.id, "Выберите валюту:", reply_markup=markup)
+
+
+@bot.message_handler(commands=['help'])
+def send_help_message(message):
+    help_text = """
+    Доступные команды:
+    /start - Начать общение с ботом.
+    /all_currency - Показать все доступные курсы валют.
+    /dollar - Узнать курс доллара к рублю.
+    /euro - Узнать курс евро к рублю.
+    /yuan - Узнать курс юаня к рублю.
+    /a_currency - Выбрать конкретную валюту для просмотра.
+    /help - Показать это сообщение с инструкциями.
+    """
+    bot.reply_to(message, help_text)
+
+
+@bot.message_handler(func=lambda message: True)
+def handle_currency_choice(message):
+    if message.text == "Доллар":
+        send_dollar_rate(message)
+    elif message.text == "Евро":
+        send_euro_rate(message)
+    elif message.text == "Юань":
+        send_yuan_rate(message)
+    elif message.text == "Назад":
+        main(message)
+    elif message.text == "Узнать все курсы":
+        send_currency_rates(message)
+    elif message.text == "Конвертер валют":
+        currency_converter(message)
+    else:
+        bot.reply_to(message, "Неверная команда. Пожалуйста, используйте /help для просмотра доступных команд.")
+
+@bot.message_handler(content_types=['document', 'photo', 'audio', 'video', 'voice', 'location','sticker','text'])
+def handle_file(message):
+    bot.reply_to(message, "Используйте команды. \nСписок команд - /help")
+
+bot.polling(none_stop=True)
