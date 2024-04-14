@@ -9,7 +9,7 @@ selected_source_currency = None
 selected_target_currency = None
 
 
-TOKEN = "6312076412:AAGd2ua4yNjhA56_KtKL5b1y7S87immnPeA"
+TOKEN = ""
 bot = telebot.TeleBot(TOKEN)
 
 CURRENCIES = ["USD", "EUR", "CNY", "RUB"]
